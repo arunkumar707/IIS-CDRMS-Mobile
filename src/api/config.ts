@@ -83,17 +83,19 @@ function resolveApiHost(): string {
   const envHost = API_PROXY_URL;
   const port = apiPort();
 
+  // Explicit remote / HTTPS backend URL always takes precedence
+  if (envHost && (envHost.startsWith('https://') || !envHost.includes('localhost'))) {
+    return envHost;
+  }
+
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     try {
       const loc = window.location;
-      if (loc.protocol === 'https:') {
-        return loc.origin;
-      }
       const pageHost = loc.hostname;
       if (pageHost === 'localhost' || pageHost === '127.0.0.1') {
-        return `http://${pageHost}:${port}`;
+        return envHost || `http://${pageHost}:${port}`;
       }
-      if (pageHost) {
+      if (pageHost && !envHost) {
         return `http://${pageHost}:${port}`;
       }
     } catch {
