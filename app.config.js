@@ -6,9 +6,12 @@ const path = require('path');
  * (Do not duplicate EXPO_PUBLIC_API_URL in eas.json / config.ts / .env)
  */
 function loadEnvExample() {
-  const file = path.join(__dirname, '.env.example');
-  if (fs.existsSync(file)) {
-    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+  const envFile = path.join(__dirname, '.env');
+  const exampleFile = path.join(__dirname, '.env.example');
+  const target = fs.existsSync(envFile) ? envFile : exampleFile;
+
+  if (fs.existsSync(target)) {
+    for (const line of fs.readFileSync(target, 'utf8').split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) continue;
       const eq = trimmed.indexOf('=');
@@ -18,9 +21,7 @@ function loadEnvExample() {
         .slice(eq + 1)
         .trim()
         .replace(/^['"]|['"]$/g, '');
-      if (!process.env[key]) {
-        process.env[key] = val;
-      }
+      process.env[key] = val;
     }
   }
 }
