@@ -2,9 +2,9 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * API base URL — single source is `.env.example` (EXPO_PUBLIC_API_URL),
- * injected at build/start via app.config.js. No hardcoded host here.
- */
+* API base URL — single source is `.env.example` (EXPO_PUBLIC_API_URL),
+* injected at build/start via app.config.js. No hardcoded host here.
+*/
 function readApiProxyUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim();
   const fromExtra =
@@ -72,14 +72,35 @@ function withApiPath(host: string) {
 }
 
 /**
- * Resolve API host:
- * - Prefer EXPO_PUBLIC_API_URL from .env.example
- * - Android emulator → 10.0.2.2 only when env points at localhost
- * - iOS simulator → localhost only when env points at localhost
- */
+* Resolve API host:
+* - Web HTTPS (local :8443 proxy or production) → same origin
+* - Web on localhost → localhost:APP_PORT (Chrome blocks localhost→LAN IP)
+* - Web on a LAN IP → that IP:APP_PORT
+* - Android emulator → 10.0.2.2 only when env points at localhost
+* - iOS simulator → localhost only when env points at localhost
+*/
 function resolveApiHost(): string {
   const envHost = API_PROXY_URL;
   const port = apiPort();
+
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    try {
+      const loc = window.location;
+      if (loc.protocol === 'https:') {
+        return loc.origin;
+      }
+      const pageHost = loc.hostname;
+      if (pageHost === 'localhost' || pageHost === '127.0.0.1') {
+        return `http://${pageHost}:${port}`;
+      }
+      if (pageHost) {
+        return `http://${pageHost}:${port}`;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
   const isLocalEnv =
     envHost.includes('localhost') ||
     envHost.includes('127.0.0.1') ||
@@ -107,3 +128,4 @@ export function apiConnectionHint(): string {
     '.'
   );
 }
+
