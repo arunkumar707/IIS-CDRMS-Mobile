@@ -78,6 +78,8 @@
     "typescript": "~5.9.2"
   },
   "scripts": {
+    "build": "npx expo export --platform web",
+    "serve": "serve dist -s",
     "dev": "expo start --dev-client",
     "start": "expo start --dev-client",
     "start:go": "expo start --go",
