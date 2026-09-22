@@ -29,7 +29,7 @@ import {
   type LucideIcon,
 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { TextInput } from 'react-native';
+import { Platform, TextInput } from 'react-native';
 
 import { Box } from '@/components/ui/box';
 import { Checkbox, CheckboxIcon, CheckboxIndicator, CheckboxLabel } from '@/components/ui/checkbox';
@@ -146,7 +146,7 @@ export function BandiScreen({ go }: { go: Go }) {
     draft.occupancy === 'Occupied' &&
     Boolean(occupancyReasonError) &&
     occupancyReasonTouched;
-  const compassOk = Boolean(draft.compassReading.trim());
+  const compassOk = Boolean(String(draft.compassReading || '').trim());
   /** Simulator QA: photos optional so Continue can unlock after hardcoded compass/GPS. */
   const schedulesOk = isSimulatorOrEmulator() ? true : schedulePhotosReady;
   /** Occupancy reason is validated on Continue — do not disable the button for it. */
@@ -162,11 +162,12 @@ export function BandiScreen({ go }: { go: Go }) {
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewTitle, setPreviewTitle] = useState('Photo preview');
 
-  // Seed a default facing as soon as Step 2 opens if none is saved yet.
-  // Real devices: LiveCompassDial overwrites this with live sensor heading.
-  // Simulator / no-sensor: keeps 0° N so Continue can unlock.
+  // Native simulator only: seed 0° N so Continue can unlock without sensors.
+  // Web phones use DeviceOrientation — do not lock facing to North.
   useEffect(() => {
-    if (draft.compassReading.trim()) return;
+    if (Platform.OS === 'web') return;
+    if (!isSimulatorOrEmulator()) return;
+    if (String(draft.compassReading || '').trim()) return;
     setCompassReading(formatLiveReading(SIMULATOR_COMPASS_HEADING));
   }, [draft.compassReading, setCompassReading]);
 
@@ -359,16 +360,16 @@ export function BandiScreen({ go }: { go: Go }) {
                   });
                   return;
                 }
-                if (!draft.bandiVerified) setBandiVerified(true);
                 setStepSaving(true);
                 try {
+                  if (!draft.bandiVerified) setBandiVerified(true);
                   await persistBackendStep('compass');
+                  go('dimensions');
                 } catch (err) {
                   alertDraftError(err);
                   setStepSaving(false);
-                  return;
                 }
-                setStepSaving(false);
+                return;
               }
               go(nextAfterBandi);
             })();
@@ -587,7 +588,7 @@ export function BandiScreen({ go }: { go: Go }) {
             title="Occupancy *"
             subtitle={
               draft.occupancy === 'Occupied'
-                ? draft.occupancyReason.trim()
+                ? String(draft.occupancyReason || '').trim()
                   ? 'Occupied · reason captured'
                   : 'Occupied · Add reason below'
                 : draft.occupancy === 'Empty'
@@ -838,6 +839,9 @@ export function BandiScreen({ go }: { go: Go }) {
                         fontSize: 13,
                         fontWeight: '700',
                         color: '#0F172A',
+                        ...(Platform.OS === 'web'
+                          ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+                          : null),
                       }}
                     />
                   ) : (

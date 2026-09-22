@@ -8,9 +8,9 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react-native';
-import { useEffect, useRef, useState } from 'react';
+import { createElement, useEffect, useRef, useState } from 'react';
 import type { GestureResponderEvent, LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator } from 'react-native';
+import { ActivityIndicator, Platform } from 'react-native';
 
 import { Box } from '@/components/ui/box';
 import { HStack } from '@/components/ui/hstack';
@@ -135,6 +135,28 @@ export function SiteVideoPlayer({ uri, durationLabel, height }: Props) {
       <Box style={[shellStyle, { alignItems: 'center', justifyContent: 'center' }]}>
         <ActivityIndicator color="#fff" />
         <Text className="text-white/70 text-xs font-semibold mt-2">Loading video…</Text>
+      </Box>
+    );
+  }
+
+  if (
+    Platform.OS === 'web' &&
+    displayUri &&
+    (/^blob:|^data:/i.test(displayUri) || /^blob:|^data:/i.test(safeUri))
+  ) {
+    return (
+      <Box style={shellStyle}>
+        {createElement('video', {
+          src: displayUri,
+          controls: true,
+          playsInline: true,
+          style: {
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            backgroundColor: '#000',
+          },
+        })}
       </Box>
     );
   }

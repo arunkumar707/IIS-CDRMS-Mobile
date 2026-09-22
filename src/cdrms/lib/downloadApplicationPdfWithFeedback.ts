@@ -68,12 +68,19 @@ export async function downloadApplicationPdfWithFeedback(
     showAppDialog({
       variant: 'success',
       title: 'Download completed',
-      message: 'Your PDF has been saved on this device.',
+      message:
+        Platform.OS === 'web'
+          ? 'The survey report PDF was saved to your downloads.'
+          : 'Your PDF has been saved on this device.',
       highlightLabel: 'File',
       highlight: result.fileName,
+      hideCancel: Platform.OS === 'web',
       cancelLabel: 'OK',
-      confirmLabel: 'Open PDF',
-      onConfirm: () => void openPdfWithChooser(result.openUri || result.savedPath),
+      confirmLabel: Platform.OS === 'web' ? 'OK' : 'Open PDF',
+      onConfirm:
+        Platform.OS === 'web'
+          ? undefined
+          : () => void openPdfWithChooser(result.openUri || result.savedPath),
     });
 
     return result;

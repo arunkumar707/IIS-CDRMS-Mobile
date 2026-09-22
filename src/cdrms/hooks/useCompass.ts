@@ -40,7 +40,9 @@ export type CompassReading = {
   accuracy: number;
   available: boolean;
   status: 'live' | 'calibrating' | 'permission' | 'unavailable' | 'idle';
-  source: 'location' | 'magnetometer' | 'simulator' | 'none';
+  source: 'location' | 'magnetometer' | 'simulator' | 'web' | 'none';
+  /** iOS Safari: must run from a tap. */
+  enableLive?: () => void;
 };
 
 function normalizeHeading(deg: number): number {
@@ -73,9 +75,9 @@ export function formatLiveReading(heading: number): string {
 
 /** Parse saved values like `312° NW`, `90 E`, or `NE`. */
 export function parseCompassReading(
-  raw: string,
+  raw: string | null | undefined,
 ): { heading: number; face: CompassCardinal } | null {
-  const t = raw.trim().toUpperCase();
+  const t = String(raw ?? '').trim().toUpperCase();
   if (!t) return null;
 
   if ((COMPASS_CARDINALS as readonly string[]).includes(t)) {
@@ -98,6 +100,41 @@ function magnetometerToHeading(x: number, y: number): number {
   let angle = (Math.atan2(y, x) * 180) / Math.PI;
   angle = 90 - angle; // align with typical phone flat orientation
   return normalizeHeading(angle);
+}
+
+function screenOrientationOffset(): number {
+  if (typeof window === 'undefined') return 0;
+  const ori = window.screen?.orientation?.angle;
+  if (typeof ori === 'number' && Number.isFinite(ori)) return ori;
+  const legacy = (window as Window & { orientation?: number }).orientation;
+  if (typeof legacy === 'number' && Number.isFinite(legacy)) return legacy;
+  return 0;
+}
+
+/** Browser DeviceOrientation → heading 0° = North. */
+function headingFromOrientationEvent(e: DeviceOrientationEvent): number | null {
+  const webkit = (e as DeviceOrientationEvent & { webkitCompassHeading?: number })
+    .webkitCompassHeading;
+  if (typeof webkit === 'number' && Number.isFinite(webkit) && webkit >= 0) {
+    return normalizeHeading(webkit + screenOrientationOffset());
+  }
+  if (e.alpha == null || !Number.isFinite(e.alpha)) return null;
+  return normalizeHeading(360 - e.alpha + screenOrientationOffset());
+}
+
+function webNeedsOrientationPermission(): boolean {
+  if (typeof window === 'undefined') return false;
+  const DOE = window.DeviceOrientationEvent as
+    | (typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> })
+    | undefined;
+  return typeof DOE?.requestPermission === 'function';
+}
+
+/** Laptop/desktop browsers — no magnetometer; use manual facing pick on web QA. */
+export function isDesktopWeb(): boolean {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return !/Android|iPhone|iPad|iPod|Mobile|IEMobile|Opera Mini/i.test(ua);
 }
 
 /** iOS Simulator + Android Emulator — no usable compass hardware. */
@@ -129,7 +166,7 @@ export function isSimulatorOrEmulator(): boolean {
  * Simulator/emulator: fixed North so Continue works in QA — never used on hardware.
  */
 export function useCompass(enabled = true): CompassReading {
-  const sim = isSimulatorOrEmulator();
+  const sim = Platform.OS !== 'web' && isSimulatorOrEmulator();
   const [reading, setReading] = useState<CompassReading>(() =>
     sim
       ? {
@@ -143,20 +180,19 @@ export function useCompass(enabled = true): CompassReading {
           heading: 0,
           accuracy: -1,
           available: false,
-          status: 'idle',
+          status: Platform.OS === 'web' ? 'calibrating' : 'idle',
           source: 'none',
         },
   );
   const lastGood = useRef(0);
-  const sourceRef = useRef<'location' | 'magnetometer' | 'simulator' | 'none'>(
+  const sourceRef = useRef<'location' | 'magnetometer' | 'simulator' | 'web' | 'none'>(
     sim ? 'simulator' : 'none',
   );
 
   useEffect(() => {
     if (!enabled) return;
 
-    // Simulators have no magnetometer / heading — seed one fixed facing for QA only.
-    if (isSimulatorOrEmulator()) {
+    if (isSimulatorOrEmulator() && Platform.OS !== 'web') {
       setReading({
         heading: SIMULATOR_COMPASS_HEADING,
         accuracy: -1,
@@ -165,6 +201,145 @@ export function useCompass(enabled = true): CompassReading {
         source: 'simulator',
       });
       return;
+    }
+
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined') return;
+
+      // Windows/macOS desktop Chrome/Edge — no DeviceOrientation hardware.
+      if (isDesktopWeb()) {
+        setReading({
+          heading: 0,
+          accuracy: -1,
+          available: false,
+          status: 'unavailable',
+          source: 'none',
+        });
+        return;
+      }
+
+      let cancelled = false;
+      let attached = false;
+      let gotAbsolute = false;
+      let magTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const onOrient = (e: Event) => {
+        if (cancelled) return;
+        const de = e as DeviceOrientationEvent;
+        const isAbs =
+          e.type === 'deviceorientationabsolute' || de.absolute === true;
+        if (isAbs) gotAbsolute = true;
+        else if (gotAbsolute) return;
+        const heading = headingFromOrientationEvent(de);
+        if (heading == null) return;
+        lastGood.current = Date.now();
+        sourceRef.current = 'web';
+        setReading({
+          heading,
+          accuracy: -1,
+          available: true,
+          status: 'live',
+          source: 'web',
+          enableLive,
+        });
+      };
+
+      const detach = () => {
+        window.removeEventListener('deviceorientationabsolute', onOrient);
+        window.removeEventListener('deviceorientation', onOrient);
+        attached = false;
+      };
+
+      const attach = () => {
+        if (cancelled || attached) return;
+        attached = true;
+        window.addEventListener('deviceorientationabsolute', onOrient, true);
+        window.addEventListener('deviceorientation', onOrient, true);
+      };
+
+      const enableLive = () => {
+        void (async () => {
+          try {
+            const DOE = window.DeviceOrientationEvent as
+              | (typeof DeviceOrientationEvent & {
+                  requestPermission?: () => Promise<string>;
+                })
+              | undefined;
+            if (typeof DOE?.requestPermission === 'function') {
+              const result = await DOE.requestPermission();
+              if (cancelled) return;
+              if (result !== 'granted') {
+                setReading({
+                  heading: 0,
+                  accuracy: -1,
+                  available: false,
+                  status: 'permission',
+                  source: 'none',
+                  enableLive,
+                });
+                return;
+              }
+            }
+            attach();
+            setReading((prev) => ({
+              ...prev,
+              status: prev.source === 'web' ? 'live' : 'calibrating',
+              enableLive,
+            }));
+          } catch {
+            if (!cancelled) {
+              setReading({
+                heading: 0,
+                accuracy: -1,
+                available: false,
+                status: 'unavailable',
+                source: 'none',
+                enableLive,
+              });
+            }
+          }
+        })();
+      };
+
+      if (webNeedsOrientationPermission()) {
+        setReading({
+          heading: 0,
+          accuracy: -1,
+          available: false,
+          status: 'permission',
+          source: 'none',
+          enableLive,
+        });
+      } else {
+        attach();
+        setReading({
+          heading: 0,
+          accuracy: -1,
+          available: false,
+          status: 'calibrating',
+          source: 'none',
+          enableLive,
+        });
+      }
+
+      magTimer = setTimeout(() => {
+        if (cancelled) return;
+        if (sourceRef.current === 'web') return;
+        setReading((prev) => ({
+          heading: 0,
+          accuracy: -1,
+          available: false,
+          status: prev.status === 'permission' ? 'permission' : 'unavailable',
+          source: 'none',
+          enableLive: prev.status === 'permission' ? enableLive : undefined,
+        }));
+      }, 2800);
+
+      return () => {
+        cancelled = true;
+        detach();
+        if (magTimer) clearTimeout(magTimer);
+      };
     }
 
     let cancelled = false;
@@ -275,8 +450,16 @@ export function useCompass(enabled = true): CompassReading {
 
     return () => {
       cancelled = true;
-      headingSub?.remove();
-      magSub?.remove();
+      try {
+        headingSub?.remove();
+      } catch {
+        /* ignore */
+      }
+      try {
+        magSub?.remove();
+      } catch {
+        /* ignore */
+      }
       if (magTimer) clearTimeout(magTimer);
     };
   }, [enabled]);

@@ -28,6 +28,52 @@ import { resolveBoundaryDims, deriveSiteTypeFromDims } from '@/src/cdrms/lib/res
 import { COLORS, DESIGN, FONTS, GLASS, SPACE, hexAlpha } from '@/src/cdrms/theme';
 import { useTheme } from '@/src/theme/ThemeContext';
 
+function scheduleViewValue(
+  app: MobileApplication,
+  side: 'N' | 'S' | 'E' | 'W',
+): string {
+  const zc =
+    side === 'N'
+      ? app.scheduleNorth
+      : side === 'S'
+        ? app.scheduleSouth
+        : side === 'E'
+          ? app.scheduleEast
+          : app.scheduleWest;
+  if (zc?.trim()) return zc.trim();
+  const notes = app.engineerScheduleNotes || {};
+  const eng = notes[side]?.trim() || notes[side.toLowerCase()]?.trim() || '';
+  return eng || '—';
+}
+
+function dimViewValue(
+  app: MobileApplication,
+  side: 'N' | 'S' | 'E' | 'W',
+  boundary?: { north: number; south: number; east: number; west: number } | null,
+): string {
+  const flat =
+    side === 'N'
+      ? app.dimNorth
+      : side === 'S'
+        ? app.dimSouth
+        : side === 'E'
+          ? app.dimEast
+          : app.dimWest;
+  if (flat != null && String(flat).trim()) return String(flat).trim();
+  const eng = app.engineerDimensions;
+  const fromMap = eng?.[side]?.trim() || eng?.[side.toLowerCase()]?.trim();
+  if (fromMap) return fromMap;
+  const n =
+    side === 'N'
+      ? boundary?.north
+      : side === 'S'
+        ? boundary?.south
+        : side === 'E'
+          ? boundary?.east
+          : boundary?.west;
+  return n && n > 0 ? String(n) : '—';
+}
+
 const FIELD_RADIUS = 14;
 const ACCENT = {
   blue: { fg: '#1A368E', bg: '#E8F0FE' },
@@ -152,21 +198,38 @@ function ReadValue({
   accent?: keyof typeof ACCENT;
 }) {
   const tone = ACCENT[accent];
+  const text = typeof value === 'string' || typeof value === 'number' ? String(value || '—') : null;
+  const long = Boolean(text && text.length > 42);
   return (
     <Box
       style={{
-        height: 46,
+        minHeight: 46,
         borderRadius: FIELD_RADIUS,
         borderWidth: 1.5,
         borderColor: hexAlpha(tone.fg, 0.42),
         backgroundColor: COLORS.white,
         paddingHorizontal: 12,
+        paddingVertical: long ? 10 : 0,
         justifyContent: 'center',
+        alignSelf: 'stretch',
+        overflow: 'hidden',
       }}
     >
-      {typeof value === 'string' || typeof value === 'number' ? (
-        <Text style={{ fontFamily: FONTS.medium, fontSize: 14, color: COLORS.ink, lineHeight: 19 }}>
-          {value || '—'}
+      {text != null ? (
+        <Text
+          style={{
+            fontFamily: FONTS.medium,
+            fontSize: 14,
+            color: COLORS.ink,
+            lineHeight: 19,
+            flexShrink: 1,
+            width: '100%',
+            ...(Platform.OS === 'web'
+              ? ({ wordBreak: 'break-word' as const } as object)
+              : null),
+          }}
+        >
+          {text}
         </Text>
       ) : (
         value ?? (
@@ -409,16 +472,16 @@ function ZcDetailsCard({
       >
         <InfoPairRow
           leftLabel="North"
-          leftValue={app.scheduleNorth || '—'}
+          leftValue={scheduleViewValue(app, 'N')}
           rightLabel="South"
-          rightValue={app.scheduleSouth || '—'}
+          rightValue={scheduleViewValue(app, 'S')}
           accent="purple"
         />
         <InfoPairRow
           leftLabel="West"
-          leftValue={app.scheduleWest || '—'}
+          leftValue={scheduleViewValue(app, 'W')}
           rightLabel="East"
-          rightValue={app.scheduleEast || '—'}
+          rightValue={scheduleViewValue(app, 'E')}
           accent="purple"
         />
         {diagram ? <Box style={{ marginTop: 2 }}>{diagram}</Box> : null}
@@ -703,6 +766,19 @@ export function ApplicationRecordDetails({
               rightLabel="Total area"
               rightValue={app.totalSiteArea ? String(app.totalSiteArea) : boundary.total != null ? String(boundary.total) : '—'}
               emphasisLabels
+            />
+            <InfoPairRow
+              leftLabel="Dim N"
+              leftValue={dimViewValue(app, 'N', boundary.dims)}
+              rightLabel="Dim S"
+              rightValue={dimViewValue(app, 'S', boundary.dims)}
+            />
+            <InfoPairRow
+              leftLabel="Dim E"
+              leftValue={dimViewValue(app, 'E', boundary.dims)}
+              rightLabel="Dim W"
+              rightValue={dimViewValue(app, 'W', boundary.dims)}
+              last
             />
             <Box style={{ marginTop: 4 }}>{engineerDiagram}</Box>
           </>

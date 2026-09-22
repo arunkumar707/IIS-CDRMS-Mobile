@@ -8,14 +8,44 @@ import { useCdrmsFonts } from '@/src/cdrms/fonts';
 import { COLORS } from '@/src/cdrms/theme';
 import { ThemeProvider } from '@/src/theme/ThemeContext';
 import '@/global.css';
-import { useEffect, useRef } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { ActivityIndicator, Platform, View, type ViewStyle } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import {
   SafeAreaListener,
   SafeAreaProvider,
 } from 'react-native-safe-area-context';
 import { Uniwind } from 'uniwind';
+
+const WEB_PHONE_MAX_WIDTH = 430;
+
+const webOuterStyle: ViewStyle = {
+  flex: 1,
+  width: '100%',
+  height: '100%',
+  backgroundColor: '#E8EEF5',
+};
+
+const webInnerStyle: ViewStyle = {
+  width: '100%',
+  maxWidth: WEB_PHONE_MAX_WIDTH,
+  height: '100%',
+  flex: 1,
+  alignSelf: 'center',
+  marginLeft: 'auto',
+  marginRight: 'auto',
+  overflow: 'hidden',
+  backgroundColor: COLORS.soft,
+};
+
+function wrapForWeb(node: ReactNode) {
+  if (Platform.OS !== 'web') return node;
+  return (
+    <View style={webOuterStyle}>
+      <View style={webInnerStyle}>{node}</View>
+    </View>
+  );
+}
 
 export default function App() {
   const [fontsLoaded] = useCdrmsFonts();
@@ -28,7 +58,7 @@ export default function App() {
   }, []);
 
   if (!fontsLoaded) {
-    return (
+    return wrapForWeb(
       <View
         style={{
           flex: 1,
@@ -42,8 +72,8 @@ export default function App() {
     );
   }
 
-  return (
-    <SafeAreaProvider>
+  return wrapForWeb(
+    <SafeAreaProvider style={{ flex: 1 }}>
       <SafeAreaListener
         onChange={({ insets }) => {
           const prev = lastInsets.current;

@@ -682,6 +682,8 @@ function Field({
           caretHidden={locked}
           onFocus={() => {
             if (locked) return;
+            // Web: delayed measure + scrollTo unfocuses the field (keyboard flicker).
+            if (Platform.OS === 'web') return;
             const report = () => {
               inputRef.current?.measureInWindow((_x, y, _w, h) => {
                 onFocus?.({ y, height: h || inputHeight });
@@ -703,6 +705,9 @@ function Field({
             fontSize,
             color: locked ? '#475569' : COLORS.ink,
             fontFamily: FONTS.medium,
+            ...(Platform.OS === 'web'
+              ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+              : null),
           }}
         />
       </HStack>
@@ -812,12 +817,45 @@ export function ZcCreateScreen({ go }: { go: Go }) {
   const { themeId } = useTheme();
   const { accessToken } = useAuth();
   const insets = useSafeAreaInsets();
+  const { width: winW } = useWindowDimensions();
+  /** iPhone SE / 320px web: stack paired fields so Save/Cancel stay on-screen. */
+  const compactForm = winW < 400;
   const scrollRef = useRef<RNScrollView>(null);
   const scrollYRef = useRef(0);
   const keyboardHeightRef = useRef(0);
   const focusedFieldRef = useRef<{ y: number; height: number } | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [headerCompact, setHeaderCompact] = useState(false);
+  const applyHeaderCompact = useCallback((y: number) => {
+    scrollYRef.current = y;
+    const next = y > 48;
+    setHeaderCompact((prev) => (prev === next ? prev : next));
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const bind = () => {
+      const sv = scrollRef.current as unknown as {
+        getScrollableNode?: () => unknown;
+      } | null;
+      const node = sv?.getScrollableNode?.() as
+        | { scrollTop?: number; addEventListener?: Function; removeEventListener?: Function }
+        | undefined;
+      if (!node?.addEventListener) return undefined;
+      const onDomScroll = () => applyHeaderCompact(Number(node.scrollTop) || 0);
+      node.addEventListener('scroll', onDomScroll, { passive: true });
+      return () => node.removeEventListener?.('scroll', onDomScroll);
+    };
+    let unbind = bind();
+    const t = setTimeout(() => {
+      unbind?.();
+      unbind = bind();
+    }, 80);
+    return () => {
+      clearTimeout(t);
+      unbind?.();
+    };
+  }, [applyHeaderCompact]);
   const [editApplicationId] = useState(() => consumeZcEditApplicationId());
   const isEditing = Boolean(editApplicationId);
   const [zone, setZone] = useState<MyZoneMeta | null>(null);
@@ -923,6 +961,8 @@ export function ZcCreateScreen({ go }: { go: Go }) {
    * (bottom of form) still scrolls up before keyboardDidShow fires.
    */
   const ensureVisible = useCallback((anchorYInWindow?: number, fieldHeight = 44) => {
+    // Scrolling on web blurs the focused input (keyboard open/close loop).
+    if (Platform.OS === 'web') return;
     if (anchorYInWindow == null) return;
     const scroll = scrollRef.current as unknown as {
       measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void;
@@ -949,6 +989,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const show = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       (e) => {
@@ -1306,31 +1347,32 @@ export function ZcCreateScreen({ go }: { go: Go }) {
     <ScreenShell className="bg-background">
       <BdaPageWatermark />
       <Box style={{ flex: 1, backgroundColor: 'transparent' }}>
-      {headerCompact ? (
-        <Box
-          pointerEvents="box-none"
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            zIndex: 40,
-            elevation: 20,
-          }}
-        >
-          <CompactCreateApplicationHeader
-            onBack={() => go('zc_home')}
-            zone={zone?.zoneCode}
-            title={createTitle}
-          />
-        </Box>
-      ) : null}
+      {/* Sticky compact header — always mounted; shown after the hero scrolls away. */}
+      <Box
+        pointerEvents={headerCompact ? 'box-none' : 'none'}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 40,
+          elevation: 20,
+          opacity: headerCompact ? 1 : 0,
+        }}
+      >
+        <CompactCreateApplicationHeader
+          onBack={() => go('zc_home')}
+          zone={zone?.zoneCode}
+          title={createTitle}
+        />
+      </Box>
       {/*
         Bottom padding grows with keyboard so Comments (last field) can scroll
         above it. ensureVisible re-runs after keyboardDidShow to fix timing.
       */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
+        enabled={Platform.OS !== 'web'}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
       >
@@ -1339,21 +1381,23 @@ export function ZcCreateScreen({ go }: { go: Go }) {
           ref={scrollRef}
           style={{ flex: 1, backgroundColor: 'transparent' }}
           contentContainerStyle={{
-            // Extra space so Comments can scroll above the keyboard.
-            // Android uses softwareKeyboardLayoutMode "resize" — use a capped
-            // inset so we don't double-count the resized window.
+            // Native: extra inset only while the keyboard is open.
+            // Web: the visual viewport already shrinks — a fixed 220px spacer
+            // left a large empty gap under Save / Submit.
             paddingBottom:
-              32 +
+              24 +
               insets.bottom +
-              (keyboardHeight > 0
-                ? Platform.OS === 'android'
+              (Platform.OS === 'web' || keyboardHeight <= 0
+                ? 0
+                : Platform.OS === 'android'
                   ? Math.min(Math.max(keyboardHeight * 0.55, 160), 240)
-                  : keyboardHeight
-                : 0),
+                  : keyboardHeight),
             flexGrow: 1,
           }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps={Platform.OS === 'web' ? 'always' : 'handled'}
+          keyboardDismissMode={
+            Platform.OS === 'web' ? 'none' : Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+          }
           nestedScrollEnabled
           scrollEnabled={!dimOpen && !engOpen}
           showsVerticalScrollIndicator
@@ -1361,10 +1405,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
           bounces
           overScrollMode="always"
           onScroll={(e) => {
-            const y = e.nativeEvent.contentOffset.y;
-            scrollYRef.current = y;
-            const next = y > 48;
-            setHeaderCompact((prev) => (prev === next ? prev : next));
+            applyHeaderCompact(e.nativeEvent.contentOffset?.y ?? 0);
           }}
         >
           <CreateApplicationHeader
@@ -1372,7 +1413,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
             zone={zone?.zoneCode}
             title={createTitle}
           />
-          <Box style={{ gap: 12, paddingTop: 4, flex: 1 }}>
+          <Box style={{ gap: 12, paddingTop: 4 }}>
           {loading || saving ? (
             <Box style={{ flex: 1, minHeight: 380, justifyContent: 'center', alignItems: 'center' }}>
               <ScreenLoader minHeight={340} />
@@ -1414,11 +1455,17 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                     style={{ marginBottom: 12 }}
                   />
                 </View>
-                <HStack style={{ gap: 10, marginBottom: 12 }}>
+                <Box
+                  style={{
+                    flexDirection: compactForm ? 'column' : 'row',
+                    gap: compactForm ? 12 : 10,
+                    marginBottom: 12,
+                  }}
+                >
                   <View
                     ref={setFieldAnchorRef('siteNo')}
                     collapsable={false}
-                    style={{ flex: 1 }}
+                    style={{ flex: compactForm ? undefined : 1, minWidth: 0 }}
                   >
                     <Field
                       label="Site no"
@@ -1440,7 +1487,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                   <View
                     ref={setFieldAnchorRef('siteDimensionType')}
                     collapsable={false}
-                    style={{ flex: 1 }}
+                    style={{ flex: compactForm ? undefined : 1, minWidth: 0 }}
                   >
                     <VStack style={{ flex: 1 }}>
                       <Text
@@ -1456,9 +1503,10 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                       </Text>
                       <HStack
                         style={{
-                          gap: 10,
+                          gap: compactForm ? 8 : 10,
                           minHeight: 48,
                           alignItems: 'center',
+                          flexWrap: 'wrap',
                           borderRadius: FIELD_RADIUS,
                           borderWidth: 1.5,
                           borderColor: fieldErrors.siteDimensionType
@@ -1483,11 +1531,12 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                               style={{
                                 flexDirection: 'row',
                                 alignItems: 'center',
-                                gap: 7,
-                                paddingHorizontal: 10,
+                                gap: 6,
+                                paddingHorizontal: compactForm ? 8 : 10,
                                 paddingVertical: 8,
                                 borderRadius: 999,
                                 backgroundColor: on ? '#E8F0FE' : 'transparent',
+                                flexShrink: 0,
                               }}
                             >
                               <View
@@ -1539,7 +1588,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                       ) : null}
                     </VStack>
                   </View>
-                </HStack>
+                </Box>
 
                 <View ref={setFieldAnchorRef('siteDimension')} collapsable={false}>
                 <Text
@@ -1559,6 +1608,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                     onPress={openDimDropdown}
                     style={{
                       flex: 1,
+                      minWidth: 0,
                       height: 48,
                       borderRadius: FIELD_RADIUS,
                       borderWidth: 1.5,
@@ -1594,7 +1644,8 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                     }}
                     style={{
                       height: 48,
-                      paddingHorizontal: 14,
+                      paddingHorizontal: compactForm ? 10 : 14,
+                      flexShrink: 0,
                       borderRadius: 999,
                       backgroundColor: '#2563EB',
                       flexDirection: 'row',
@@ -1621,7 +1672,13 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                 ) : null}
 
                 {addingDim ? (
-                  <HStack style={{ gap: 8, alignItems: 'center' }}>
+                  <Box
+                    style={{
+                      flexDirection: compactForm ? 'column' : 'row',
+                      gap: 8,
+                      alignItems: compactForm ? 'stretch' : 'center',
+                    }}
+                  >
                     <TextInput
                       value={newDimValue}
                       onChangeText={(v) => setNewDimValue(sanitizeSiteDimensionInput(v))}
@@ -1629,7 +1686,8 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                       placeholderTextColor="#94A3B8"
                       autoFocus
                       style={{
-                        flex: 1,
+                        flex: compactForm ? undefined : 1,
+                        minWidth: 0,
                         height: 46,
                         borderRadius: FIELD_RADIUS,
                         borderWidth: 1.5,
@@ -1639,12 +1697,17 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                         fontSize: 13,
                         color: COLORS.ink,
                         fontFamily: FONTS.medium,
+                        ...(Platform.OS === 'web'
+                          ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+                          : null),
                       }}
                     />
+                    <HStack style={{ gap: 8, flexShrink: 0 }}>
                     <Pressable
                       onPress={() => void saveNewDimension()}
                       disabled={savingDim}
                       style={{
+                        flex: compactForm ? 1 : undefined,
                         height: 46,
                         paddingHorizontal: 14,
                         borderRadius: 999,
@@ -1668,6 +1731,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                         setNewDimValue('');
                       }}
                       style={{
+                        flex: compactForm ? 1 : undefined,
                         height: 46,
                         paddingHorizontal: 12,
                         borderRadius: FIELD_RADIUS,
@@ -1682,7 +1746,8 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                         Cancel
                       </Text>
                     </Pressable>
-                  </HStack>
+                    </HStack>
+                  </Box>
                 ) : null}
                 </View>
               </PlainSectionCard>
@@ -1738,11 +1803,17 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                     style={{ marginBottom: 12 }}
                   />
                 </View>
-                <HStack style={{ gap: 10, marginBottom: 12 }}>
+                <Box
+                  style={{
+                    flexDirection: compactForm ? 'column' : 'row',
+                    gap: compactForm ? 12 : 10,
+                    marginBottom: 12,
+                  }}
+                >
                   <View
                     ref={setFieldAnchorRef('addressBlock')}
                     collapsable={false}
-                    style={{ flex: 1 }}
+                    style={{ flex: compactForm ? undefined : 1, minWidth: 0 }}
                   >
                     <Field
                       label="Block/Stage/Phase"
@@ -1761,7 +1832,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                       onFocus={onFieldFocus}
                     />
                   </View>
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: compactForm ? undefined : 1, minWidth: 0 }}>
                     <Field
                       label="City"
                       labelFontSize={14}
@@ -1772,9 +1843,14 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                       onChange={() => {}}
                     />
                   </View>
-                </HStack>
-                <HStack style={{ gap: 10 }}>
-                  <View style={{ flex: 1 }}>
+                </Box>
+                <Box
+                  style={{
+                    flexDirection: compactForm ? 'column' : 'row',
+                    gap: compactForm ? 12 : 10,
+                  }}
+                >
+                  <View style={{ flex: compactForm ? undefined : 1, minWidth: 0 }}>
                     <Field
                       label="State"
                       leftIcon={MapIcon}
@@ -1787,7 +1863,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                   <View
                     ref={setFieldAnchorRef('addressPincode')}
                     collapsable={false}
-                    style={{ flex: 1 }}
+                    style={{ flex: compactForm ? undefined : 1, minWidth: 0 }}
                   >
                     <Field
                       label="Pincode"
@@ -1808,7 +1884,7 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                       returnKeyType="next"
                     />
                   </View>
-                </HStack>
+                </Box>
               </PlainSectionCard>
 
               <PlainSectionCard
@@ -1987,9 +2063,12 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                 <Pressable
                   onPress={() => void onSubmitApplication()}
                   disabled={saving}
-                  className="flex-1 overflow-hidden active:opacity-90"
+                  className="flex-1 active:opacity-90"
                   style={{
+                    height: 50,
                     borderRadius: 999,
+                    backgroundColor: '#1E3A8A',
+                    overflow: 'hidden',
                     opacity: saving ? 0.7 : 1,
                     shadowColor: '#2563EB',
                     shadowOffset: { width: 0, height: 6 },
@@ -2003,7 +2082,8 @@ export function ZcCreateScreen({ go }: { go: Go }) {
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={{
-                      height: 48,
+                      height: 50,
+                      borderRadius: 999,
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}

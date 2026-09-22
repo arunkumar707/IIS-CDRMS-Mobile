@@ -82,20 +82,169 @@ function pickAddress(parts: Location.LocationGeocodedAddress[]): GeoAddress {
   };
 }
 
+function emptyAddress(latitude: number, longitude: number): GeoAddress {
+  return {
+    village: '',
+    taluk: '',
+    district: '',
+    state: '',
+    displayName: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+  };
+}
+
+type NominatimReverse = {
+  display_name?: string;
+  name?: string;
+  address?: {
+    house_number?: string;
+    road?: string;
+    neighbourhood?: string;
+    suburb?: string;
+    quarter?: string;
+    village?: string;
+    town?: string;
+    city?: string;
+    city_district?: string;
+    county?: string;
+    state_district?: string;
+    municipality?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+  };
+};
+
+function fromNominatim(data: NominatimReverse): GeoAddress | null {
+  const a = data.address;
+  if (!a && !data.display_name) return null;
+
+  const city = a?.city || a?.town || a?.village || a?.municipality || '';
+  const suburb = a?.suburb || a?.quarter || a?.neighbourhood || '';
+  const street = a?.road
+    ? a.house_number
+      ? `${a.house_number} ${a.road}`
+      : a.road
+    : undefined;
+  const district = a?.city_district || a?.state_district || a?.county || '';
+  const stateRaw = a?.state || '';
+  const state = stateRaw.toLowerCase().includes('karnataka') ? 'Karnataka' : stateRaw;
+  const displayName =
+    data.display_name?.trim() ||
+    [data.name, street, suburb, city, district, state, a?.postcode]
+      .filter(Boolean)
+      .filter((v, i, arr) => arr.indexOf(v) === i)
+      .join(', ');
+  if (!displayName) return null;
+
+  return {
+    village: city || suburb,
+    taluk: a?.county || suburb,
+    district: district || city,
+    state,
+    street,
+    name: data.name || street,
+    layoutName: suburb || city || undefined,
+    area: city || suburb,
+    block: suburb,
+    postalCode: a?.postcode,
+    country: a?.country,
+    displayName,
+  };
+}
+
+type PhotonFeature = {
+  properties?: {
+    name?: string;
+    street?: string;
+    housenumber?: string;
+    locality?: string;
+    district?: string;
+    county?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+  };
+};
+
+function fromPhoton(feature: PhotonFeature | undefined): GeoAddress | null {
+  const p = feature?.properties;
+  if (!p) return null;
+  const street = p.street
+    ? p.housenumber
+      ? `${p.housenumber} ${p.street}`
+      : p.street
+    : undefined;
+  const city = p.city || p.locality || '';
+  const state = (p.state || '').toLowerCase().includes('karnataka')
+    ? 'Karnataka'
+    : p.state || '';
+  const displayName = [p.name, street, p.locality, city, p.district, state, p.postcode]
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i)
+    .join(', ');
+  if (!displayName) return null;
+  return {
+    village: city,
+    taluk: p.county || p.district || '',
+    district: p.district || city,
+    state,
+    street,
+    name: p.name || street,
+    layoutName: p.locality || city || undefined,
+    area: city || p.locality,
+    block: p.locality || p.district,
+    postalCode: p.postcode,
+    country: p.country,
+    displayName,
+  };
+}
+
+/** expo-location reverse geocode was removed on web (SDK 49) — use OSM. */
+async function reverseGeocodeWeb(latitude: number, longitude: number): Promise<GeoAddress | null> {
+  const nominatimUrl =
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
+    `&lat=${encodeURIComponent(String(latitude))}` +
+    `&lon=${encodeURIComponent(String(longitude))}` +
+    `&addressdetails=1`;
+  try {
+    const res = await fetch(nominatimUrl, {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const mapped = fromNominatim((await res.json()) as NominatimReverse);
+      if (mapped) return mapped;
+    }
+  } catch {
+    /* try Photon */
+  }
+
+  try {
+    const res = await fetch(
+      `https://photon.komoot.io/reverse?lat=${encodeURIComponent(String(latitude))}` +
+        `&lon=${encodeURIComponent(String(longitude))}`,
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { features?: PhotonFeature[] };
+    return fromPhoton(body.features?.[0]);
+  } catch {
+    return null;
+  }
+}
+
 async function reverseGeocode(latitude: number, longitude: number): Promise<GeoAddress> {
+  if (Platform.OS === 'web') {
+    return (await reverseGeocodeWeb(latitude, longitude)) ?? emptyAddress(latitude, longitude);
+  }
+
   try {
     const parts = await Location.reverseGeocodeAsync({ latitude, longitude });
-    return pickAddress(parts);
+    const mapped = pickAddress(parts);
+    if (mapped.displayName.trim()) return mapped;
   } catch {
-    // Keep coordinates usable even if reverse-geocode fails — never invent a place name.
-    return {
-      village: '',
-      taluk: '',
-      district: '',
-      state: '',
-      displayName: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
-    };
+    /* native geocoder unavailable — keep coordinates */
   }
+  return emptyAddress(latitude, longitude);
 }
 
 /** Ask iOS/Android for location permission + turn Location on (Android). */

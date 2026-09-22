@@ -77,7 +77,7 @@ export function SearchField({
             fontFamily: FONTS.medium,
             color: COLORS.ink,
             paddingVertical: 0,
-            ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+            ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
           },
           inputStyle,
         ]}

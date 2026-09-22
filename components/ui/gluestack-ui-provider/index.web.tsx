@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useLayoutEffect } from 'react';
+import { View } from 'react-native';
 import { OverlayProvider } from '@gluestack-ui/core/overlay/creator';
 import { ToastProvider } from '@gluestack-ui/core/toast/creator';
 import { Uniwind } from 'uniwind';
@@ -48,7 +49,9 @@ export function GluestackUIProvider({
         }}
       />
       <OverlayProvider>
-        <ToastProvider>{props.children}</ToastProvider>
+        <ToastProvider>
+          <View style={{ flex: 1 }}>{props.children}</View>
+        </ToastProvider>
       </OverlayProvider>
     </>
   );

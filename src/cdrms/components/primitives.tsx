@@ -72,9 +72,9 @@ export function ScreenShell({
     <Box
       key={themeId}
       className={`flex-1 bg-background ${className}`}
-      style={[{ backgroundColor: COLORS.soft, overflow: 'hidden' }, style]}
+      style={[{ backgroundColor: COLORS.soft, overflow: 'hidden', minHeight: 0 }, style]}
     >
-      <Box style={{ flex: 1, zIndex: 1 }}>{children}</Box>
+      <Box style={{ flex: 1, zIndex: 1, minHeight: 0 }}>{children}</Box>
     </Box>
   );
 }
@@ -1011,7 +1011,7 @@ export const Field = forwardRef<
               fontFamily: FONTS.semibold,
               color: COLORS.ink,
               ...(Platform.OS === 'web'
-                ? ({ outlineStyle: 'none', cursor: 'text' } as object)
+                ? ({ outlineStyle: 'none', outlineWidth: 0, cursor: 'text' } as object)
                 : null),
             },
             style,

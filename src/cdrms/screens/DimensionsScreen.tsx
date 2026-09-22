@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Platform, TextInput } from 'react-native';
 import { Ruler } from 'lucide-react-native';
 
@@ -12,11 +12,10 @@ import {
   FooterContinueBtn,
   PremiumStepCard,
 } from '@/src/cdrms/components/SurveyLayout';
-import { siteDimensionToFormDims, deriveSiteTypeFromDims } from '@/src/cdrms/lib/resolveBoundaryDims';
+import { deriveSiteTypeFromDims } from '@/src/cdrms/lib/resolveBoundaryDims';
 import { useProject } from '@/src/cdrms/project/ProjectContext';
 import { alertDraftError } from '@/src/cdrms/project/draft-api';
 import { type Cardinal } from '@/src/cdrms/project/types';
-import { useMinimumLoading } from '@/src/cdrms/components/primitives';
 import { CARDINAL_ACCENT, COLORS, FONTS, hexAlpha } from '@/src/cdrms/theme';
 import { useTheme } from '@/src/theme/ThemeContext';
 import type { Go } from '@/src/cdrms/types';
@@ -147,6 +146,9 @@ function DimSideField({
             ...(Platform.OS === 'android'
               ? { textAlignVertical: 'center', includeFontPadding: false }
               : null),
+            ...(Platform.OS === 'web'
+              ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+              : null),
           }}
         />
       </Box>
@@ -167,47 +169,20 @@ export function DimensionsScreen({ go }: { go: Go }) {
   );
   /** Live plot: Odd (or incomplete) uses irregular sketch; Even only when opposite sides match. */
   const isOdd = measuredType !== 'Even';
-  const pageLoading = useMinimumLoading(true, 300);
   const [stepSaving, setStepSaving] = useState(false);
-  const clearedZcSeed = useRef(false);
-
-  useEffect(() => {
-    if (!isBackendTask || clearedZcSeed.current) return;
-    const zc = siteDimensionToFormDims(draft.siteDimensionMaster);
-    if (!zc) return;
-    const matchesZc =
-      draft.dimNorth.trim() === zc.north &&
-      draft.dimSouth.trim() === zc.south &&
-      draft.dimEast.trim() === zc.east &&
-      draft.dimWest.trim() === zc.west;
-    if (!matchesZc) return;
-    clearedZcSeed.current = true;
-    setDimSide('N', '');
-    setDimSide('S', '');
-    setDimSide('E', '');
-    setDimSide('W', '');
-  }, [
-    isBackendTask,
-    draft.siteDimensionMaster,
-    draft.dimNorth,
-    draft.dimSouth,
-    draft.dimEast,
-    draft.dimWest,
-    setDimSide,
-  ]);
 
   const liveSiteDimension = (() => {
-    const n = draft.dimNorth.trim();
-    const s = draft.dimSouth.trim();
-    const e = draft.dimEast.trim();
-    const w = draft.dimWest.trim();
+    const n = String(draft.dimNorth ?? '').trim();
+    const s = String(draft.dimSouth ?? '').trim();
+    const e = String(draft.dimEast ?? '').trim();
+    const w = String(draft.dimWest ?? '').trim();
     if (!n && !s && !e && !w) return '—';
     if (!isOdd && n && e && n === s && e === w) return `${n}*${e}`;
     if (n && s && e && w) return `${n}*${e}*${s}*${w}`;
     return [n || '—', e || '—', s || '—', w || '—'].join('*');
   })();
 
-  const siteNoLabel = (draft.siteNo.trim() || draft.surveyNo.trim() || '').trim();
+  const siteNoLabel = `${draft.siteNo || ''}`.trim() || `${draft.surveyNo || ''}`.trim();
 
   const dimsReady = [draft.dimNorth, draft.dimSouth, draft.dimEast, draft.dimWest].every(
     (v) => Number(v) > 0,
@@ -264,7 +239,6 @@ export function DimensionsScreen({ go }: { go: Go }) {
       title="Site Dimension Sketch"
       subtitle="N / S / E / W · live plot updates"
       surface="premium"
-      loading={pageLoading}
       onBack={() => {
         go('bandi', { replace: true });
         void reloadBackendDraft().catch(() => undefined);
@@ -311,7 +285,7 @@ export function DimensionsScreen({ go }: { go: Go }) {
                   key={side}
                   side={side}
                   label={label}
-                  value={draft[key]}
+                  value={String(draft[key] ?? '')}
                   onChangeText={(t) => setDimSide(side, t)}
                 />
               ),
@@ -324,7 +298,7 @@ export function DimensionsScreen({ go }: { go: Go }) {
                   key={side}
                   side={side}
                   label={label}
-                  value={draft[key]}
+                  value={String(draft[key] ?? '')}
                   onChangeText={(t) => setDimSide(side, t)}
                 />
               ),

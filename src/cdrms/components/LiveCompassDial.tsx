@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Line, Polygon, Text as SvgText } from 'react-native-svg';
 
 import { Box } from '@/components/ui/box';
@@ -7,8 +7,11 @@ import { HStack } from '@/components/ui/hstack';
 import { Text } from '@/components/ui/text';
 import { VStack } from '@/components/ui/vstack';
 import {
+  CARDINAL_DEGREES,
+  COMPASS_CARDINALS,
   cardinalNameFromHeading,
   formatLiveReading,
+  isDesktopWeb,
   parseCompassReading,
   SIMULATOR_COMPASS_FACE,
   SIMULATOR_COMPASS_HEADING,
@@ -116,13 +119,36 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
   );
   const accent = cardinalAccentColor(face);
   const roseRotation = -heading;
-  const hasReading = Boolean(draft.compassReading.trim());
+  const hasReading = Boolean(String(draft.compassReading || '').trim());
   const directionName = hasReading ? cardinalNameFromHeading(heading) : '—';
+  const desktopWeb = Platform.OS === 'web' && isDesktopWeb();
+  const showManualPick =
+    Platform.OS === 'web' &&
+    (desktopWeb || !compass.available || compass.status === 'unavailable');
+  const needsEnableTap =
+    Platform.OS === 'web' &&
+    !desktopWeb &&
+    typeof compass.enableLive === 'function' &&
+    (compass.status === 'permission' ||
+      (compass.status === 'unavailable' && !compass.available));
   const needsManualPick =
-    !compass.available ||
-    compass.source === 'simulator' ||
-    compass.status === 'unavailable' ||
-    compass.status === 'permission';
+    !needsEnableTap &&
+    !showManualPick &&
+    (!compass.available ||
+      compass.source === 'simulator' ||
+      compass.status === 'unavailable' ||
+      compass.status === 'permission');
+  const waitingForWeb =
+    Platform.OS === 'web' &&
+    !desktopWeb &&
+    compass.status === 'calibrating' &&
+    !compass.available;
+
+  const pickFacing = (cardinal: CompassCardinal) => {
+    const reading = formatLiveReading(CARDINAL_DEGREES[cardinal]);
+    lastSaved.current = reading;
+    setCompassReading(reading);
+  };
 
   const tickMajor = hexAlpha(COLORS.primary, 0.42);
   const tickMinor = hexAlpha(COLORS.primary, 0.18);
@@ -142,12 +168,22 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
       : '—';
 
   useEffect(() => {
-    Animated.timing(rotateAnim, {
+    if (Platform.OS === 'web') return;
+    const anim = Animated.timing(rotateAnim, {
       toValue: roseRotation,
       duration: 180,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start();
+    });
+    anim.start();
+    return () => {
+      try {
+        anim.stop();
+        rotateAnim.stopAnimation();
+      } catch {
+        /* ignore */
+      }
+    };
   }, [roseRotation, rotateAnim]);
 
   // Live sensors → save continuously
@@ -159,15 +195,18 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
     setCompassReading(reading);
   }, [compass.available, compass.heading, compass.source, setCompassReading]);
 
-  // Simulator / sensors missing → seed fixed North so Continue unlocks
+  // Simulator / desktop with no sensors → seed North so Continue unlocks.
+  // Desktop web: user picks direction manually — do not auto-seed.
   useEffect(() => {
     if (compass.available && compass.source !== 'simulator') return;
+    if (Platform.OS === 'web' && isDesktopWeb()) return;
+    if (Platform.OS === 'web' && compass.status === 'calibrating') return;
+    if (Platform.OS === 'web' && compass.status === 'permission') return;
     if (
       compass.source === 'simulator' ||
-      compass.status === 'unavailable' ||
-      compass.status === 'permission'
+      compass.status === 'unavailable'
     ) {
-      if (seededFallback.current && draft.compassReading.trim()) return;
+      if (seededFallback.current && String(draft.compassReading || '').trim()) return;
       seededFallback.current = true;
       const reading = formatLiveReading(SIMULATOR_COMPASS_HEADING);
       lastSaved.current = reading;
@@ -186,7 +225,51 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
       className="items-center"
       style={{ gap: compact ? 8 : SPACE[3], width: '100%' }}
     >
-      {needsManualPick ? (
+      {needsEnableTap ? (
+        <Pressable onPress={() => compass.enableLive?.()} hitSlop={8}>
+          <Text
+            style={{
+              fontFamily: FONTS.medium,
+              fontSize: 12,
+              lineHeight: 15,
+              color: COLORS.primary,
+              textAlign: 'center',
+              paddingHorizontal: 4,
+              textDecorationLine: 'underline',
+            }}
+          >
+            {compass.status === 'permission'
+              ? 'Tap to enable live compass'
+              : 'No compass in this browser — open this page on your phone, then tap here'}
+          </Text>
+        </Pressable>
+      ) : waitingForWeb ? (
+        <Text
+          style={{
+            fontFamily: FONTS.medium,
+            fontSize: 12,
+            lineHeight: 15,
+            color: COLORS.ink,
+            textAlign: 'center',
+            paddingHorizontal: 4,
+          }}
+        >
+          Hold phone flat — waiting for compass…
+        </Text>
+      ) : showManualPick && !hasReading ? (
+        <Text
+          style={{
+            fontFamily: FONTS.medium,
+            fontSize: 12,
+            lineHeight: 15,
+            color: COLORS.ink,
+            textAlign: 'center',
+            paddingHorizontal: 4,
+          }}
+        >
+          No compass on this device — pick facing direction below
+        </Text>
+      ) : needsManualPick ? (
         <Text
           style={{
             fontFamily: FONTS.medium,
@@ -269,25 +352,8 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
           })()}
         </Svg>
 
-        <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            width: size,
-            height: size,
-            alignItems: 'center',
-            justifyContent: 'center',
-            transform: [
-              {
-                rotate: rotateAnim.interpolate({
-                  inputRange: [-720, 720],
-                  outputRange: ['-720deg', '720deg'],
-                }),
-              },
-            ],
-          }}
-        >
-          {dialLabels.map((d) => {
+        {(() => {
+          const labels = dialLabels.map((d) => {
             const { x, y } = dialPoint(d.deg, m.labelR);
             const box = d.size * 1.25;
             return (
@@ -310,8 +376,44 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
                 {d.label}
               </Text>
             );
-          })}
-        </Animated.View>
+          });
+          const roseLayout = {
+            position: 'absolute' as const,
+            width: size,
+            height: size,
+            alignItems: 'center' as const,
+            justifyContent: 'center' as const,
+          };
+          // Web has no native Animated driver — interpolating rotate here blanks Step 3 on unmount.
+          if (Platform.OS === 'web') {
+            return (
+              <View
+                pointerEvents="none"
+                style={{ ...roseLayout, transform: [{ rotate: `${roseRotation}deg` }] }}
+              >
+                {labels}
+              </View>
+            );
+          }
+          return (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                ...roseLayout,
+                transform: [
+                  {
+                    rotate: rotateAnim.interpolate({
+                      inputRange: [-720, 720],
+                      outputRange: ['-720deg', '720deg'],
+                    }),
+                  },
+                ],
+              }}
+            >
+              {labels}
+            </Animated.View>
+          );
+        })()}
 
         <Box pointerEvents="none" className="absolute inset-0 items-center justify-center">
           <Text
@@ -339,6 +441,43 @@ export function LiveCompassDial({ compact = false }: { compact?: boolean }) {
       >
         {directionName}
       </Text>
+
+      {showManualPick ? (
+        <Box style={{ width: '100%', paddingHorizontal: compact ? 0 : 4 }}>
+          <HStack style={{ flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
+            {COMPASS_CARDINALS.map((cardinal) => {
+              const selected = face === cardinal;
+              const accentColor = cardinalAccentColor(cardinal);
+              return (
+                <Pressable
+                  key={cardinal}
+                  onPress={() => pickFacing(cardinal)}
+                  style={{
+                    minWidth: compact ? 52 : 58,
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    borderRadius: 999,
+                    borderWidth: 1.5,
+                    borderColor: selected ? accentColor : hexAlpha(COLORS.primary, 0.22),
+                    backgroundColor: selected ? hexAlpha(accentColor, 0.14) : COLORS.white,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: FONTS.bold,
+                      fontSize: compact ? 12 : 13,
+                      color: selected ? accentColor : COLORS.ink,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {cardinal}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </HStack>
+        </Box>
+      ) : null}
 
       <Box
         style={{

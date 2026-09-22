@@ -466,10 +466,15 @@ export function caoDecideApplication(
   });
 }
 
-export function fetchApplication(token: string, id: string) {
-  return apiRequest<unknown>(`/applications/${id}`, { token }).then((raw) =>
-    normalizeApplication(asData<Record<string, unknown>>(raw)),
-  );
+export function fetchApplication(
+  token: string,
+  id: string,
+  options?: { skipErrorPage?: boolean },
+) {
+  return apiRequest<unknown>(`/applications/${id}`, {
+    token,
+    skipErrorPage: options?.skipErrorPage,
+  }).then((raw) => normalizeApplication(asData<Record<string, unknown>>(raw)));
 }
 
 export function formatApplicationDate(value?: string | null) {
@@ -531,6 +536,8 @@ export function saveEngineerDraft(
     method: 'PATCH',
     token,
     body,
+    // Callers show a dialog; do not replace the survey with the full-page 500 screen.
+    skipErrorPage: true,
   });
 }
 

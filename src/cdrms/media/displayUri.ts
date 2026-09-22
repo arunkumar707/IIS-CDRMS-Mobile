@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { API_BASE_URL } from '@/src/api/config';
 
@@ -11,6 +12,7 @@ export function isRemoteMediaUri(uri: string | null | undefined): boolean {
 function isLocalMediaUri(uri: string): boolean {
   return (
     uri.startsWith('file://') ||
+    uri.startsWith('blob:') ||
     uri.startsWith('content://') ||
     uri.startsWith('data:') ||
     uri.startsWith('ph://') ||
@@ -21,6 +23,27 @@ function isLocalMediaUri(uri: string): boolean {
 /** Authenticated object-store proxy URL (same as web view-by-url). */
 export function objectStoreProxyUrl(storedUrl: string): string {
   return `${API_BASE_URL}/object-store/view-by-url?url=${encodeURIComponent(storedUrl.trim())}`;
+}
+
+/** Fetch MinIO/object-store media with JWT — `<img src>` cannot send Authorization. */
+export async function fetchAuthenticatedMediaBlob(
+  storedUrl: string,
+  token: string,
+): Promise<Blob> {
+  const res = await fetch(objectStoreProxyUrl(storedUrl), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: '*/*',
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Media fetch failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  if (blob.size < 32) {
+    throw new Error('Media file empty');
+  }
+  return blob;
 }
 
 /**
@@ -114,6 +137,44 @@ export function useResolvedMediaUri(
       setLoading(false);
       setError(false);
       return;
+    }
+
+    // Web <img>/<video> cannot send Authorization. Fetch a blob URL instead.
+    if (Platform.OS === 'web') {
+      if (!token) {
+        setDisplayUri(null);
+        setLoading(false);
+        setError(true);
+        return;
+      }
+
+      let cancelled = false;
+      let objectUrl: string | null = null;
+      void (async () => {
+        setLoading(true);
+        setError(false);
+        try {
+          const blob = await fetchAuthenticatedMediaBlob(trimmed, token);
+          objectUrl = URL.createObjectURL(blob);
+          if (cancelled) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+          setDisplayUri(objectUrl);
+          setLoading(false);
+        } catch {
+          if (!cancelled) {
+            setDisplayUri(null);
+            setLoading(false);
+            setError(true);
+          }
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      };
     }
 
     let cancelled = false;

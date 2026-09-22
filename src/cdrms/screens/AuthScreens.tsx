@@ -400,6 +400,8 @@ export function LoginScreen({ go }: { go: Go }) {
   const passwordRef = useRef<TextInput>(null);
   const scrollRef = useRef<RNScrollView>(null);
   const formYRef = useRef(0);
+  /** Web: fields stay empty until tap so Chrome does not fill on logout. */
+  const [allowAutofill, setAllowAutofill] = useState(Platform.OS !== 'web');
 
   // Fit Oppo A78 / other mid-range widths — keep footer text on-screen
   const isNarrow = winW < 390;
@@ -792,17 +794,20 @@ export function LoginScreen({ go }: { go: Go }) {
                         value={loginId}
                         onChangeText={setLoginId}
                         onFocus={() => {
+                          if (Platform.OS === 'web') setAllowAutofill(true);
                           setFocusedInput('loginId');
                           scrollFormIntoView();
                         }}
                         onBlur={() => setFocusedInput(null)}
                         autoCapitalize="none"
                         autoCorrect={false}
-                        autoComplete="off"
+                        autoComplete="username"
+                        readOnly={!allowAutofill}
                         placeholder="Enter login ID or email"
                         placeholderTextColor={LOGIN_MUTED}
                         returnKeyType="next"
                         onSubmitEditing={() => passwordRef.current?.focus()}
+                        underlineColorAndroid="transparent"
                         style={{
                           flex: 1,
                           height: '100%',
@@ -811,6 +816,9 @@ export function LoginScreen({ go }: { go: Go }) {
                           color: LOGIN_NAVY,
                           paddingRight: 4,
                           paddingVertical: 0,
+                          ...(Platform.OS === 'web'
+                            ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+                            : null),
                         }}
                       />
                     </Pressable>
@@ -858,6 +866,7 @@ export function LoginScreen({ go }: { go: Go }) {
                         value={password}
                         onChangeText={setPassword}
                         onFocus={() => {
+                          if (Platform.OS === 'web') setAllowAutofill(true);
                           setFocusedInput('password');
                           scrollFormIntoView();
                         }}
@@ -865,11 +874,13 @@ export function LoginScreen({ go }: { go: Go }) {
                         secureTextEntry={!showPassword}
                         autoCapitalize="none"
                         autoCorrect={false}
-                        autoComplete="off"
+                        autoComplete="current-password"
+                        readOnly={!allowAutofill}
                         placeholder="Enter password"
                         placeholderTextColor={LOGIN_MUTED}
                         returnKeyType="go"
                         onSubmitEditing={() => void onSecureLogin()}
+                        underlineColorAndroid="transparent"
                         style={{
                           flex: 1,
                           height: '100%',
@@ -878,6 +889,9 @@ export function LoginScreen({ go }: { go: Go }) {
                           color: LOGIN_NAVY,
                           paddingRight: 4,
                           paddingVertical: 0,
+                          ...(Platform.OS === 'web'
+                            ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+                            : null),
                         }}
                       />
                       <Pressable
@@ -1166,6 +1180,9 @@ function OtpDigitBox({
             fontWeight: '800',
             color: '#0F172A',
             padding: 0,
+            ...(Platform.OS === 'web'
+              ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+              : null),
           }}
         />
       </Animated.View>
@@ -2106,7 +2123,12 @@ const FENCE_RADIUS_FT = GEO_FENCE_RADIUS_FT;
 export function GeoScreen({ go }: { go: Go }) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
+  const { width: winW, height: winH } = useWindowDimensions();
   const { refresh, loading: geoBusy } = useDeviceLocation();
+  /** Short / narrow phones: tighter type so the map keeps ~40% of the view. */
+  const compact = winH < 760 || winW < 400;
+  const webWrap =
+    Platform.OS === 'web' ? ({ wordBreak: 'break-word' as const } as object) : null;
 
   const [scanning, setScanning] = useState(true);
   const [locationResult, setLocationResult] = useState<LocationResult | null>(null);
@@ -2235,6 +2257,8 @@ export function GeoScreen({ go }: { go: Go }) {
       .join(' · ') || 'Live GPS zone';
 
   const sheetBottom = Math.max(insets.bottom, 10) + 6;
+  /** Card ≤ 60% of the map pane so the map keeps at least 40%. */
+  const sheetMaxH = Math.round(Math.max(mapHeight, 1) * 0.6);
   /** Place tag + zoom sit just above the modal (ref) */
   const aboveModal = sheetBottom + sheetH + 12;
 
@@ -2429,7 +2453,7 @@ export function GeoScreen({ go }: { go: Go }) {
             </Pressable>
           </Box>
 
-          {/* Compact floating sheet — not full-screen (ref) */}
+          {/* Bottom sheet — capped at 60% height so the map stays visible */}
           <Animated.View
             entering={FadeInUp.duration(420).springify().damping(16)}
             onLayout={(e) => {
@@ -2441,11 +2465,10 @@ export function GeoScreen({ go }: { go: Go }) {
               left: 12,
               right: 12,
               bottom: sheetBottom,
+              maxHeight: sheetMaxH,
               backgroundColor: '#FFFFFF',
-              borderRadius: 24,
-              paddingHorizontal: 16,
-              paddingTop: 14,
-              paddingBottom: 12,
+              borderRadius: compact ? 18 : 24,
+              overflow: 'hidden',
               shadowColor: '#0F172A',
               shadowOpacity: 0.14,
               shadowRadius: 18,
@@ -2454,39 +2477,65 @@ export function GeoScreen({ go }: { go: Go }) {
               zIndex: 20,
             }}
           >
-            <HStack style={{ alignItems: 'flex-start' }}>
-              <Box style={{ flex: 1, paddingRight: 12, minWidth: 0 }}>
-                <HStack style={{ alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <Navigation size={14} color="#2563EB" strokeWidth={2.4} />
+            <ScrollView
+              nestedScrollEnabled
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{
+                paddingHorizontal: compact ? 12 : 16,
+                paddingTop: compact ? 10 : 14,
+                paddingBottom: compact ? 10 : 12,
+              }}
+            >
+            <Box
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+              }}
+            >
+              <Box
+                style={{
+                  flex: 1,
+                  paddingRight: 10,
+                  minWidth: 0,
+                }}
+              >
+                <HStack style={{ alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                  <Navigation size={13} color="#2563EB" strokeWidth={2.4} />
                   <Text
                     style={{
                       fontFamily: FONTS.bold,
-                      fontSize: 11,
+                      fontSize: 10,
                       letterSpacing: 0.4,
                       color: '#2563EB',
                       textTransform: 'uppercase',
                       flexShrink: 1,
                     }}
-                    numberOfLines={1}
                   >
                     Current Location
                   </Text>
                 </HStack>
                 <Text
-                  style={{ fontFamily: FONTS.bold, fontSize: 15, color: '#0F172A', lineHeight: 20 }}
-                  numberOfLines={2}
+                  style={{
+                    fontFamily: FONTS.bold,
+                    fontSize: compact ? 13 : 15,
+                    color: '#0F172A',
+                    lineHeight: compact ? 17 : 20,
+                    ...webWrap,
+                  }}
                 >
                   {villageName}
                 </Text>
                 <Text
                   style={{
                     fontFamily: FONTS.medium,
-                    fontSize: 12,
+                    fontSize: compact ? 11 : 12,
                     color: '#64748B',
-                    marginTop: 3,
-                    lineHeight: 16,
+                    marginTop: 2,
+                    lineHeight: compact ? 15 : 17,
+                    ...webWrap,
                   }}
-                  numberOfLines={2}
                 >
                   {districtName}, {stateName}
                 </Text>
@@ -2501,35 +2550,45 @@ export function GeoScreen({ go }: { go: Go }) {
                 }}
               />
 
-              <Box style={{ flex: 1, paddingLeft: 12, minWidth: 0 }}>
-                <HStack style={{ alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <ShieldCheck size={14} color="#7C3AED" strokeWidth={2.4} />
+              <Box
+                style={{
+                  flex: 1,
+                  paddingLeft: 10,
+                  minWidth: 0,
+                }}
+              >
+                <HStack style={{ alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                  <ShieldCheck size={13} color="#7C3AED" strokeWidth={2.4} />
                   <Text
                     style={{
                       fontFamily: FONTS.bold,
-                      fontSize: 11,
+                      fontSize: 10,
                       letterSpacing: 0.4,
                       color: '#7C3AED',
                       textTransform: 'uppercase',
                       flexShrink: 1,
                     }}
-                    numberOfLines={1}
                   >
                     Assigned Zone
                   </Text>
                 </HStack>
                 <Text
-                  style={{ fontFamily: FONTS.bold, fontSize: 15, color: '#0F172A', lineHeight: 20 }}
-                  numberOfLines={2}
+                  style={{
+                    fontFamily: FONTS.bold,
+                    fontSize: compact ? 13 : 15,
+                    color: '#0F172A',
+                    lineHeight: compact ? 17 : 20,
+                    ...webWrap,
+                  }}
                 >
                   {zoneLabel.replace(' · ', ' • ')}
                 </Text>
                 <View
                   style={{
                     alignSelf: 'flex-start',
-                    marginTop: 6,
-                    paddingHorizontal: 10,
-                    paddingVertical: 4,
+                    marginTop: 4,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
                     borderRadius: 999,
                     backgroundColor: '#F3E8FF',
                   }}
@@ -2537,7 +2596,7 @@ export function GeoScreen({ go }: { go: Go }) {
                   <Text
                     style={{
                       fontFamily: FONTS.bold,
-                      fontSize: 11,
+                      fontSize: 10,
                       color: '#7C3AED',
                     }}
                   >
@@ -2545,14 +2604,14 @@ export function GeoScreen({ go }: { go: Go }) {
                   </Text>
                 </View>
               </Box>
-            </HStack>
+            </Box>
 
             <HStack
               style={{
                 alignItems: 'center',
                 gap: 8,
-                marginTop: 14,
-                paddingTop: 12,
+                marginTop: compact ? 8 : 14,
+                paddingTop: compact ? 8 : 12,
                 borderTopWidth: 1,
                 borderTopColor: '#EEF2F7',
               }}
@@ -2574,12 +2633,12 @@ export function GeoScreen({ go }: { go: Go }) {
             <Text
               style={{
                 fontFamily: FONTS.bold,
-                fontSize: 12,
+                fontSize: 10,
                 letterSpacing: 0.5,
                 color: '#64748B',
                 textTransform: 'uppercase',
-                marginTop: 16,
-                marginBottom: 8,
+                marginTop: compact ? 8 : 16,
+                marginBottom: compact ? 6 : 8,
               }}
             >
               Geo Status
@@ -2593,7 +2652,7 @@ export function GeoScreen({ go }: { go: Go }) {
                     backgroundColor: '#FEF2F2',
                     borderWidth: 1.5,
                     borderColor: '#FECACA',
-                    padding: 14,
+                    padding: compact ? 10 : 14,
                   }}
                 >
                   <HStack style={{ alignItems: 'flex-start', gap: 12 }}>
@@ -2651,8 +2710,8 @@ export function GeoScreen({ go }: { go: Go }) {
                     backgroundColor: '#ECFDF5',
                     borderWidth: 1,
                     borderColor: '#BBF7D0',
-                    paddingVertical: 12,
-                    paddingHorizontal: 12,
+                    paddingVertical: compact ? 8 : 12,
+                    paddingHorizontal: compact ? 10 : 12,
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 10,
@@ -2675,18 +2734,18 @@ export function GeoScreen({ go }: { go: Go }) {
                     <ShieldCheck size={15} color="#16A34A" strokeWidth={2.4} />
                   </View> */}
                   <VStack style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontFamily: FONTS.bold, fontSize: 15, color: '#15803D' }}>
+                    <Text style={{ fontFamily: FONTS.bold, fontSize: compact ? 13 : 15, color: '#15803D' }}>
                       Verified
                     </Text>
                     <Text
                       style={{
                         fontFamily: FONTS.medium,
-                        fontSize: 13,
+                        fontSize: compact ? 12 : 13,
                         color: '#16A34A',
                         marginTop: 2,
-                        lineHeight: 15,
+                        lineHeight: compact ? 16 : 18,
+                        ...webWrap,
                       }}
-                      numberOfLines={2}
                     >
                       You are within the assigned jurisdiction
                     </Text>
@@ -2694,7 +2753,11 @@ export function GeoScreen({ go }: { go: Go }) {
                 </Box>
                 <Image
                   source={GEO_VERIFIED_BADGE}
-                  style={{ width: 58, height: 58, marginRight: -2 }}
+                  style={{
+                    width: compact ? 44 : 58,
+                    height: compact ? 44 : 58,
+                    marginRight: -2,
+                  }}
                   resizeMode="contain"
                   accessibilityLabel="Verified"
                 />
@@ -2707,7 +2770,7 @@ export function GeoScreen({ go }: { go: Go }) {
                 disabled={isBusy}
                 className="active:opacity-90 overflow-hidden"
                 style={{
-                  marginTop: 12,
+                  marginTop: compact ? 8 : 12,
                   borderRadius: 999,
                   shadowColor: '#2563EB',
                   shadowOffset: { width: 0, height: 8 },
@@ -2722,7 +2785,7 @@ export function GeoScreen({ go }: { go: Go }) {
                   start={{ x: 0, y: 0.5 }}
                   end={{ x: 1, y: 0.5 }}
                   style={{
-                    height: 54,
+                    height: compact ? 44 : 54,
                     borderRadius: 999,
                     flexDirection: 'row',
                     alignItems: 'center',
@@ -2743,6 +2806,7 @@ export function GeoScreen({ go }: { go: Go }) {
                 </LinearGradient>
               </Pressable>
             ) : null}
+            </ScrollView>
           </Animated.View>
         </Box>
       </Box>

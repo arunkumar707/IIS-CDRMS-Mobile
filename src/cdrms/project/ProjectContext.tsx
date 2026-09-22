@@ -33,7 +33,6 @@ import { draftFromBackendApplication } from '@/src/cdrms/project/backend-draft';
 import { draftFromApplicationRecord, findSampleApp } from '@/src/cdrms/data';
 import { captureCurrentLocation } from '@/src/cdrms/hooks/useDeviceLocation';
 import { validateOccupancyReason } from '@/src/cdrms/lib/occupancyValidation';
-import { siteDimensionToFormDims } from '@/src/cdrms/lib/resolveBoundaryDims';
 import { validateDraft, validationSummary } from '@/src/cdrms/project/validation';
 
 function toEngineerGeoAddress(
@@ -312,7 +311,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const reloadBackendDraft = useCallback(async () => {
     if (!accessToken || !draft.backendApplicationId) return;
-    const app = await fetchApplication(accessToken, draft.backendApplicationId);
+    const app = await fetchApplication(accessToken, draft.backendApplicationId, {
+      skipErrorPage: true,
+    });
     setDraft(draftFromBackendApplication(app));
   }, [accessToken, draft.backendApplicationId]);
 
@@ -329,10 +330,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
       if (step === 'schedules' || step === 'compass') {
         body.engineerScheduleNotes = {
-          N: draft.directions.N.trim(),
-          S: draft.directions.S.trim(),
-          E: draft.directions.E.trim(),
-          W: draft.directions.W.trim(),
+          N: String(draft.directions?.N ?? '').trim(),
+          S: String(draft.directions?.S ?? '').trim(),
+          E: String(draft.directions?.E ?? '').trim(),
+          W: String(draft.directions?.W ?? '').trim(),
         };
         body.scheduleRoadFlags = {
           N: Boolean(draft.roadFlags?.N),
@@ -343,7 +344,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }
 
       if (step === 'compass') {
-        body.compass = draft.compassReading.trim();
+        body.compass = String(draft.compassReading ?? '').trim();
         if (draft.gps) {
           body.latitude = String(draft.gps.latitude);
           body.longitude = String(draft.gps.longitude);
@@ -356,7 +357,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         }
         body.occupancy = draft.occupancy;
         body.occupancyReason =
-          draft.occupancy === 'Occupied' ? draft.occupancyReason.trim() : '';
+          draft.occupancy === 'Occupied' ? String(draft.occupancyReason ?? '').trim() : '';
         const schedulePhotoUrls: NonNullable<EngineerDraftInput['schedulePhotoUrls']> = {};
         const nextSurrounding = { ...draft.surroundingPhotos };
         for (const key of ['N', 'S', 'E', 'W'] as const) {
@@ -812,18 +813,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     if (draft.compassReading.trim() || draft.gps) {
       await persistBackendStep('compass');
     }
-    // Only persist dimensions the engineer typed — never ZC siteDimension copies.
-    const zc = siteDimensionToFormDims(draft.siteDimensionMaster);
-    const dimsAreZcCopy =
-      Boolean(zc) &&
-      draft.dimNorth.trim() === zc!.north &&
-      draft.dimSouth.trim() === zc!.south &&
-      draft.dimEast.trim() === zc!.east &&
-      draft.dimWest.trim() === zc!.west;
-    if (
-      !dimsAreZcCopy &&
-      [draft.dimNorth, draft.dimSouth, draft.dimEast, draft.dimWest].some((v) => Number(v) > 0)
-    ) {
+    if ([draft.dimNorth, draft.dimSouth, draft.dimEast, draft.dimWest].some((v) => Number(v) > 0)) {
       await persistBackendStep('dimensions');
     }
     if (draft.photos.length > 0 || draft.video || draft.engineerComments.trim()) {

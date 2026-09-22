@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { View } from "react-native";
 import { ErrorScreen } from "./ErrorScreen";
 import { resolveErrorKind, resolveErrorStatus } from "./resolve-error-kind";
 import type { ErrorKind } from "./types";
@@ -33,20 +34,26 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   render() {
-    if (!this.state.hasError) return this.props.children;
+    if (!this.state.hasError) {
+      return (
+        <View style={{ flex: 1, minHeight: 0 }}>{this.props.children}</View>
+      );
+    }
 
     const kind =
       this.props.fallbackKind ?? resolveErrorKind(this.state.error);
     const status = resolveErrorStatus(this.state.error);
 
     return (
-      <ErrorScreen
-        go={this.props.go}
-        kind={kind}
-        status={status}
-        variant="global"
-        onRetry={this.handleReset}
-      />
+      <View style={{ flex: 1, minHeight: 0, backgroundColor: '#FFF7ED' }}>
+        <ErrorScreen
+          go={this.props.go}
+          kind={kind}
+          status={status}
+          variant="global"
+          onRetry={this.handleReset}
+        />
+      </View>
     );
   }
 }

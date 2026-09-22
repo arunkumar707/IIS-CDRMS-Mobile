@@ -1,5 +1,4 @@
 import { normalizeApplicationStatus, type MobileApplication } from '@/src/api/applications';
-import { siteDimensionToFormDims } from '@/src/cdrms/lib/resolveBoundaryDims';
 import {
   createEmptyDraft,
   type MediaAsset,
@@ -17,23 +16,10 @@ function remoteAsset(
 
 const EMPTY_DIMS = { N: '', S: '', E: '', W: '' } as const;
 
-function sameAsZcSiteDimension(
-  dims: { N: string; S: string; E: string; W: string },
-  siteDimension: string | null | undefined,
-): boolean {
-  const zc = siteDimensionToFormDims(siteDimension);
-  if (!zc) return false;
-  return (
-    dims.N === zc.north &&
-    dims.S === zc.south &&
-    dims.E === zc.east &&
-    dims.W === zc.west
-  );
-}
-
 /**
  * Engineer N/S/E/W only.
- * Never seed from ZC siteDimension, legacy dim*, or accidental copies of ZC values.
+ * Keep saved measurements even when they match ZC siteDimension (e.g. 30*40).
+ * Do not copy ZC siteDimension into empty fields.
  */
 function engineerDimsFromApp(app: MobileApplication): {
   N: string;
@@ -45,17 +31,12 @@ function engineerDimsFromApp(app: MobileApplication): {
   if (!eng || !(eng.N || eng.S || eng.E || eng.W)) {
     return { ...EMPTY_DIMS };
   }
-  const dims = {
+  return {
     N: String(eng.N || '').trim(),
     S: String(eng.S || '').trim(),
     E: String(eng.E || '').trim(),
     W: String(eng.W || '').trim(),
   };
-  // Old mobile builds used to copy ZC siteDimension into engineerDimensions — ignore those.
-  if (sameAsZcSiteDimension(dims, app.siteDimension)) {
-    return { ...EMPTY_DIMS };
-  }
-  return dims;
 }
 
 /** Seed a survey draft from a ZC-assigned backend application (incl. saved draft media). */

@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 import { API_BASE_URL } from './config';
 import { ApiError } from './client';
@@ -63,6 +64,58 @@ function networkHint(err: unknown): string {
   return msg || 'Upload failed';
 }
 
+async function blobFromUri(uri: string): Promise<Blob> {
+  const res = await fetch(uri);
+  if (!res.ok) {
+    throw new Error(`Could not read file (${res.status})`);
+  }
+  return res.blob();
+}
+
+/** Browser multipart upload — `FileSystem.uploadAsync` is native-only. */
+async function uploadViaFetch(params: {
+  uploadUrl: string;
+  fileUri: string;
+  fileName: string;
+  mime: string;
+  kind: 'image' | 'video';
+  token: string;
+}): Promise<{ status: number; bodyText: string }> {
+  const blob = await blobFromUri(params.fileUri);
+  const type =
+    (blob.type && blob.type !== 'application/octet-stream' ? blob.type : params.mime) ||
+    'application/octet-stream';
+  let fileName = params.fileName;
+  if (type.includes('webm') && !fileName.toLowerCase().endsWith('.webm')) {
+    fileName = `${fileName.replace(/\.[^.]+$/, '') || 'video'}.webm`;
+  } else if (
+    (type.includes('mp4') || type === 'video/quicktime') &&
+    !/\.(mp4|mov|m4v)$/i.test(fileName)
+  ) {
+    fileName = `${fileName.replace(/\.[^.]+$/, '') || 'video'}.mp4`;
+  }
+  const file =
+    typeof File !== 'undefined' ? new File([blob], fileName, { type }) : blob;
+  const form = new FormData();
+  (form as unknown as { append: (name: string, value: Blob, fileName?: string) => void }).append(
+    'file',
+    file,
+    fileName,
+  );
+  form.append('filename', fileName);
+  form.append('mediaKind', params.kind);
+
+  const res = await fetch(params.uploadUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${params.token}`,
+    },
+    body: form,
+  });
+  return { status: res.status, bodyText: await res.text() };
+}
+
 /**
  * Copy to a cache file whose path ends with .mp4/.jpg so Multer originalname
  * always carries a valid extension (required by backend validation).
@@ -73,6 +126,7 @@ async function ensureUploadableUri(
   fileName: string,
 ): Promise<string> {
   const trimmed = uri.trim();
+  if (Platform.OS === 'web') return trimmed;
   const cache = FileSystem.cacheDirectory;
   if (!cache) return trimmed;
 
@@ -118,23 +172,36 @@ export async function uploadMobileMedia(params: {
   let bodyText = '';
 
   try {
-    const result = await FileSystem.uploadAsync(uploadUrl, fileUri, {
-      httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType: mime,
-      parameters: {
-        filename: fileName,
-        mediaKind: kind,
-      },
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
-    });
-    status = result.status;
-    bodyText = result.body ?? '';
+    if (Platform.OS === 'web') {
+      const result = await uploadViaFetch({
+        uploadUrl,
+        fileUri,
+        fileName,
+        mime,
+        kind,
+        token,
+      });
+      status = result.status;
+      bodyText = result.bodyText;
+    } else {
+      const result = await FileSystem.uploadAsync(uploadUrl, fileUri, {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: 'file',
+        mimeType: mime,
+        parameters: {
+          filename: fileName,
+          mediaKind: kind,
+        },
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
+      });
+      status = result.status;
+      bodyText = result.body ?? '';
+    }
   } catch (err) {
     throw new ApiError(0, networkHint(err));
   }

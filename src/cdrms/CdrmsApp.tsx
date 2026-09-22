@@ -258,9 +258,9 @@ export function CdrmsApp() {
 
   return (
     <ProjectProvider>
-      <Box className="flex-1 bg-background">
+      <Box className="flex-1 bg-background" style={{ minHeight: 0 }}>
         <ErrorBoundary go={go}>
-          <Box key={screen} className="flex-1">
+          <Box className="flex-1" style={{ minHeight: 0 }}>
             {rendered}
           </Box>
         </ErrorBoundary>

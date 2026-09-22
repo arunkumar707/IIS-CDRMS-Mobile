@@ -71,7 +71,7 @@ export function roleDisplayTitle(user: RoleUser | null | undefined): string {
     case 'engineer':
       return 'Engineer';
     case 'zc':
-      return 'Zone Commissioner';
+      return 'Zonal Commissioner';
     case 'cao':
       return 'Chief Accounts Officer';
     case 'super_admin':
